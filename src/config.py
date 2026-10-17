@@ -4,7 +4,10 @@ from functools import lru_cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
+def running_on_vercel() -> bool:
+    return os.getenv("VERCEL") == "1"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
