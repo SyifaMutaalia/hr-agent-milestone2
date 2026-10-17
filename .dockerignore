@@ -17,3 +17,5 @@ outputs/
 .git/
 *.pyc
 outputs/
+docker-compose.yml
+
