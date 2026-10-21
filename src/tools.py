@@ -156,6 +156,19 @@ class ToolExecutor:
         Identity-sensitive operations always use auth.employee_id.
         The model cannot choose another employee.
         """
+        employee_only_tools = {
+            "get_my_leave_balance",
+            "prepare_leave_request",
+            "create_hr_ticket",
+        }
+
+        if (
+            tool_name in employee_only_tools
+            and auth.role != "employee"
+        ):
+            raise PermissionError(
+                "This tool is restricted to employees"
+            )
 
         if tool_name == "search_hr_policy":
             args = SearchPolicyArgs.model_validate(arguments)

@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from pyexpat.errors import messages
 from typing import Any, Protocol
 from uuid import uuid4
+
+from psycopg import rows
 
 from .contracts import (
     ActionProposal,
     ActionResult,
     AuthContext,
+    HRLeaveRequestView,
     LeaveBalance,
     LeaveRequestView,
     PolicyChunk,
@@ -34,6 +38,30 @@ class Repository(Protocol):
     def create_ticket(self, employee_id: str, category: str, summary: str) -> str: ...
     def save_trace(self, trace: dict[str, Any]) -> None: ...
     def get_trace(self, trace_id: str) -> dict[str, Any] | None: ...
+    def save_chat_message(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        role: str,
+        content: str,
+    ) -> None: ...
+
+    def get_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, str]]: ...
+    def delete_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+    ) -> int: ...
+
+    def delete_all_chat_history(
+        self,
+        employee_id: str,
+    ) -> int: ...
     def monitoring_summary(self) -> dict[str, Any]: ...
 
 
@@ -45,6 +73,7 @@ class MemoryRepository:
     """In-memory repository used by deterministic/unit tests."""
 
     def __init__(self) -> None:
+        self.chat_messages: list[dict[str, str]] = []
         self.chunks: list[PolicyChunk] = []
 
         self.identities: dict[str, AuthContext] = {
@@ -62,6 +91,11 @@ class MemoryRepository:
                 employee_id="ADM-001",
                 display_name="Monitoring Admin",
                 role="monitoring_admin",
+            ),
+            "token-hr-admin": AuthContext(
+                employee_id="ADM-002",
+                display_name="HR Admin",
+                role="hr_admin",
             ),
         }
 
@@ -268,7 +302,25 @@ class MemoryRepository:
         employee_id: str,
     ) -> list[LeaveRequestView]:
         return list(self.requests.get(employee_id, []))
+    def list_hr_leave_requests(self) -> list[HRLeaveRequestView]: ...
+    def decide_hr_leave_request(
+        self,
+        request_id: str,
+        decision: str,
+    ) -> bool:
+            if decision not in ("approved", "rejected"):
+                raise ValueError("Invalid HR decision")
 
+            for requests in self.requests.values():
+                for request in requests:
+                    if request.request_id == request_id:
+                        if request.status != "pending_manager_review":
+                            return False
+
+                    request.status = decision
+                    return True
+
+            return False
     def create_ticket(
         self,
         employee_id: str,
@@ -327,8 +379,102 @@ class MemoryRepository:
             "error_count": errors,
             "error_rate": error_rate,
         }
+    def list_hr_leave_requests(self) -> list[HRLeaveRequestView]:
+        results = []
 
+        for employee_id, requests in self.requests.items():
+            employee = next(
+                (
+                    identity
+                    for identity in self.identities.values()
+                    if identity.employee_id == employee_id
+                ),
+                None,
+            )
 
+            for request in requests:
+                results.append(
+                    HRLeaveRequestView(
+                        **request.model_dump(),
+                        employee_id=employee_id,
+                        employee_name=(
+                            employee.display_name
+                            if employee
+                            else "Unknown Employee"
+                        ),
+                    )
+                )
+
+        return sorted(
+            results,
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
+    def save_chat_message(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        role: str,
+        content: str,
+    ) -> None:
+            if role not in ("user", "assistant"):
+                raise ValueError("Invalid chat role")
+
+            self.chat_messages.append({
+                "employee_id": employee_id,
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+            })
+
+    def get_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+            messages = [
+                {
+                    "role": item["role"],
+                    "content": item["content"],
+                }
+                for item in self.chat_messages
+                if item["employee_id"] == employee_id
+                and item["conversation_id"] == conversation_id
+            ]
+
+            return messages[-limit:] if limit > 0 else []
+    def delete_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+    ) -> int:
+        before = len(self.chat_messages)
+
+        self.chat_messages = [
+            message
+            for message in self.chat_messages
+            if not (
+                message["employee_id"] == employee_id
+                and message["conversation_id"] == conversation_id
+            )
+        ]
+
+        return before - len(self.chat_messages)
+
+    def delete_all_chat_history(
+        self,
+        employee_id: str,
+    ) -> int:
+        before = len(self.chat_messages)
+
+        self.chat_messages = [
+            message
+            for message in self.chat_messages
+            if message["employee_id"] != employee_id
+        ]
+
+        return before - len(self.chat_messages)
 
 class PostgresRepository:
     def __init__(
@@ -644,11 +790,16 @@ class PostgresRepository:
         if row is None:
             return None
 
+        trace_data = row[3] or {}
+
         return {
             "trace_id": row[0],
             "employee_id": row[1],
             "outcome": row[2],
-            "trace_data": row[3],
+            "tool_calls": trace_data.get("tool_calls", []),
+            "usage": trace_data.get("usage", {}),
+            "latency_ms": trace_data.get("latency_ms"),
+            "error": trace_data.get("error"),
             "created_at": row[4].isoformat(),
         }
 
@@ -984,3 +1135,172 @@ class PostgresRepository:
 
     def close(self) -> None:
         self.pool.close()
+    def list_hr_leave_requests(self) -> list[HRLeaveRequestView]:
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        lr.request_id,
+                        lr.leave_type,
+                        lr.start_date,
+                        lr.end_date,
+                        lr.business_days,
+                        lr.status,
+                        lr.created_at,
+                        lr.employee_id,
+                        e.display_name
+                    FROM leave_requests AS lr
+                    JOIN employees AS e
+                        ON e.employee_id = lr.employee_id
+                    WHERE e.role = %s
+                    ORDER BY lr.created_at DESC
+                    """,
+                    ("employee",),
+                )
+
+                rows = cur.fetchall()
+
+        return [
+            HRLeaveRequestView(
+                request_id=row[0],
+                leave_type=row[1],
+                start_date=row[2],
+                end_date=row[3],
+                business_days=row[4],
+                status=row[5],
+                created_at=row[6],
+                employee_id=row[7],
+                employee_name=row[8],
+            )
+            for row in rows
+        ]
+    def decide_hr_leave_request(
+        self,
+        request_id: str,
+        decision: str,
+    ) -> bool:
+            if decision not in ("approved", "rejected"):
+                raise ValueError("Invalid HR decision")
+
+            with self.pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE leave_requests
+                        SET status = %s
+                        WHERE request_id = %s
+                        AND status = 'pending_manager_review'
+                        RETURNING request_id
+                        """,
+                        (decision, request_id),
+                    )
+
+                    updated = cur.fetchone()
+
+            return updated is not None
+    def save_chat_message(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        role: str,
+        content: str,
+    ) -> None:
+            if role not in ("user", "assistant"):
+                raise ValueError("Invalid chat role")
+
+            with self.pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO chat_messages (
+                            employee_id,
+                            conversation_id,
+                            role,
+                            content
+                        )
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            employee_id,
+                            conversation_id,
+                            role,
+                            content,
+                        ),
+                    )
+
+    def get_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+            if limit <= 0:
+                return []
+
+            with self.pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT role, content
+                        FROM (
+                            SELECT message_id, role, content
+                            FROM chat_messages
+                            WHERE employee_id = %s
+                            AND conversation_id = %s
+                            ORDER BY message_id DESC
+                            LIMIT %s
+                        ) AS recent_messages
+                        ORDER BY message_id ASC
+                        """,
+                        (
+                            employee_id,
+                            conversation_id,
+                            limit,
+                        ),
+                    )
+
+                    rows = cur.fetchall()
+
+            return [
+                {
+                    "role": row[0],
+                    "content": row[1],
+                }
+                for row in rows
+            ]
+    def delete_chat_history(
+        self,
+        employee_id: str,
+        conversation_id: str,
+    ) -> int:
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM chat_messages
+                    WHERE employee_id = %s
+                      AND conversation_id = %s
+                    """,
+                    (employee_id, conversation_id),
+                )
+                deleted_count = cur.rowcount
+
+        return deleted_count
+
+    def delete_all_chat_history(
+        self,
+        employee_id: str,
+    ) -> int:
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM chat_messages
+                    WHERE employee_id = %s
+                    """,
+                    (employee_id,),
+                )
+                deleted_count = cur.rowcount
+
+        return deleted_count

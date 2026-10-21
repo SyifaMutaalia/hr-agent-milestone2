@@ -45,3 +45,31 @@ def test_expired_proposal_is_rejected(repository: MemoryRepository) -> None:
     with pytest.raises(ConflictError, match="expired"):
         repository.confirm_proposal("EMP-001", "AP-TEST", "idem-12345678")
 
+def test_proposal_does_not_create_request_before_confirmation(
+    repository: MemoryRepository,
+) -> None:
+    repository.save_proposal("EMP-001", proposal())
+
+    assert repository.list_leave_requests("EMP-001") == []
+    assert repository.list_leave_requests("EMP-002") == []
+
+
+def test_confirmed_request_is_visible_only_to_owner(
+    repository: MemoryRepository,
+) -> None:
+    repository.save_proposal("EMP-001", proposal())
+
+    result = repository.confirm_proposal(
+        "EMP-001",
+        "AP-TEST",
+        "idem-12345678",
+    )
+
+    alya_requests = repository.list_leave_requests("EMP-001")
+    bima_requests = repository.list_leave_requests("EMP-002")
+
+    assert len(alya_requests) == 1
+    assert alya_requests[0].request_id == result.request_id
+    assert alya_requests[0].status == "pending_manager_review"
+
+    assert bima_requests == []

@@ -14,6 +14,7 @@ def seed_employees(cur):
         ("EMP-001", "Alya Pratama", "employee", "token-alya"),
         ("EMP-002", "Bima Santoso", "employee", "token-bima"),
         ("ADM-001", "Monitoring Admin", "monitoring_admin", "token-admin"),
+        ("ADM-002","HR admin", "hr_admin", "token-hr-admin")
     ]
 
     for employee_id, name, role, token in employees:
@@ -134,7 +135,7 @@ def main():
             total_chunks = seed_policies(cur)
 
     print("Neon seeding berhasil.")
-    print("Pegawai: 3")
+    print("Pegawai: 4")
     print("Saldo cuti: 6")
     print(f"Policy chunks diproses: {total_chunks}")
 

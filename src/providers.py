@@ -190,7 +190,14 @@ class DeterministicProvider:
             arguments = {}
         elif any(
             phrase in user_lower
-            for phrase in ("ajukan cuti", "mengajukan cuti", "request leave")
+            for phrase in (
+                "ajukan cuti",
+                "mengajukan cuti",
+                "mau cuti",
+                "ingin cuti",
+                "minta cuti",
+                "request leave",
+            )
         ):
             return ModelTurn(
                 response_id="deterministic-clarify",

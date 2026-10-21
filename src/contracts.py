@@ -17,8 +17,7 @@ class Outcome(str, Enum):
 class AuthContext(BaseModel):
     employee_id: str
     display_name: str
-    role: Literal["employee", "monitoring_admin"] = "employee"
-
+    role: Literal["employee", "monitoring_admin", "hr_admin"] = "employee"
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
@@ -96,6 +95,9 @@ class LeaveRequestView(BaseModel):
     status: str
     created_at: datetime
 
+class HRLeaveRequestView(LeaveRequestView):
+    employee_id: str
+    employee_name: str
 
 class PolicyChunk(BaseModel):
     model_config = ConfigDict(extra="forbid")

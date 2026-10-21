@@ -1,5 +1,7 @@
 [
   {"employee_id":"EMP-001","label":"Alya — pegawai","scenario":"Tanyakan kebijakan, saldo, dan siapkan cuti.","demo_token":"token-alya"},
   {"employee_id":"EMP-002","label":"Bima — pegawai","scenario":"Bandingkan saldo dan uji batas akses lintas pegawai.","demo_token":"token-bima"},
-  {"employee_id":"ADM-001","label":"Monitoring admin","scenario":"Periksa metrik, alert, dan trace tersamarkan.","demo_token":"token-admin"}
+  {"employee_id":"ADM-001","label":"Monitoring admin","scenario":"Periksa metrik, alert, dan trace tersamarkan.","demo_token":"token-admin"},
+  {"employee_id":"ADM-002","label":"HR admin","scenario":"Kelola cuti, periksa saldo, dan buat laporan.","demo_token":"token-hr-admin"}
+
 ]

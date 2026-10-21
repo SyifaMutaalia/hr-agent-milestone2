@@ -40,6 +40,18 @@ Alur pengajuan cuti:
 8. Jika perlu mengetahui ketentuan cuti, gunakan search_hr_policy
    sebelum menyiapkan proposal.
 9. Jika data wajib pengajuan belum lengkap, minta klarifikasi.
+Jika pengguna menyampaikan keinginan mengajukan cuti tetapi
+belum memberikan tanggal mulai, tanggal selesai, jenis cuti,
+atau alasan, jangan langsung mencari kebijakan HR.
+
+Mintalah informasi yang belum lengkap secara singkat dan sopan.
+
+Untuk sapaan dan permintaan klarifikasi data pengajuan cuti,
+tidak perlu menggunakan tool atau mengutip dokumen HR.
+
+Jangan memberikan klaim mengenai hak cuti, saldo cuti,
+persyaratan, atau kebijakan HR tanpa menggunakan tool
+yang sesuai.
 10. Jangan mengarang tanggal, jenis cuti, atau alasan pengajuan.
 11. Pengajuan cuti hanya boleh disiapkan sebagai proposal.
 12. Jangan menganggap proposal sebagai persetujuan.
@@ -88,9 +100,21 @@ class AgentService:
         citations: list[Citation] = []
         error_code = None
 
-        history: list[dict] = [
-            {"role": "user", "content": request.message}
-        ]
+        conversation_id = request.conversation_id
+
+        history: list[dict] = []
+
+        if conversation_id:
+            history = self.repository.get_chat_history(
+                employee_id=auth.employee_id,
+                conversation_id=conversation_id,
+                limit=20,
+            )
+
+        history.append({
+            "role": "user",
+            "content": request.message,
+        })
 
         safety_identifier = hashlib.sha256(
             auth.employee_id.encode("utf-8")
@@ -107,11 +131,7 @@ class AgentService:
                     else []
                 )
 
-                model_input = (
-                    request.message
-                    if turn_number == 0
-                    else history
-                )
+                model_input = history
 
                 turn = self.provider.respond(
                     input_data=model_input,
@@ -274,6 +294,33 @@ class AgentService:
                     outcome = "escalated"
                 elif documents or summaries:
                     outcome = "answered"
+                elif (
+                    turn.response_id == "deterministic-clarify"
+                    and auth.role == "employee"
+                ):
+                    outcome = "answered"
+                elif (
+                    auth.role == "employee"
+                    and not documents
+                    and not summaries
+                    and not turn.tool_calls
+                    and any(
+                        phrase in request.message.lower()
+                        for phrase in (
+                            "mau cuti",
+                            "ingin cuti",
+                            "ajukan cuti",
+                            "mengajukan cuti",
+                            "minta cuti",
+                        )
+                    )
+                ):
+                    answer = (
+                        "Tentu, saya bisa membantu menyiapkan pengajuan cuti. "
+                        "Mohon informasikan tanggal mulai, tanggal selesai, "
+                        "jenis cuti, dan alasan pengajuan."
+                    )
+                    outcome = "answered"
                 else:
                     error_code = "insufficient_evidence"
                     answer = ""
@@ -350,6 +397,28 @@ class AgentService:
             # Kegagalan penyimpanan trace tidak boleh
             # membocorkan detail database kepada pengguna.
             pass
+        # Simpan riwayat percakapan berdasarkan identitas pegawai.
+        # Respons gagal tidak disimpan sebagai konteks LLM.
+        if request.conversation_id and outcome != "abstained":
+            try:
+                self.repository.save_chat_message(
+                    employee_id=auth.employee_id,
+                    conversation_id=request.conversation_id,
+                    role="user",
+                    content=request.message,
+                )
+
+                self.repository.save_chat_message(
+                    employee_id=auth.employee_id,
+                    conversation_id=request.conversation_id,
+                    role="assistant",
+                    content=answer,
+                )
+
+            except Exception:
+                # Gangguan database riwayat tidak boleh
+                # menyebabkan respons agent gagal.
+                pass
 
         return ChatResponse(
             answer=answer,

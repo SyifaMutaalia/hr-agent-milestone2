@@ -1,10 +1,16 @@
 ﻿from __future__ import annotations
+
+from typing import Literal
+
 from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
+
 from .config import Settings, get_settings
-from .contracts import AuthContext, ChatRequest
-from .contracts import ConfirmActionRequest
+from .contracts import AuthContext, ChatRequest, ConfirmActionRequest
 from .repository import ConflictError
 
+class HRDecisionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
 def build_runtime(settings: Settings):
     from .agent import AgentService
     from .cache import NullCache
@@ -121,7 +127,46 @@ def create_app(
     ):
         response = agent.run(request, user)
         return response.model_dump(mode="json")
+    @app.delete("/api/v1/conversations")
+    def delete_all_conversations(
+        user: AuthContext = Depends(get_current_user),
+    ):
+        if user.role != "employee":
+            raise HTTPException(
+                status_code=403,
+                detail="Employee access required",
+            )
 
+        deleted_count = repository.delete_all_chat_history(
+            employee_id=user.employee_id,
+        )
+
+        return {
+            "status": "deleted",
+            "deleted_messages": deleted_count,
+        }
+
+    @app.delete("/api/v1/conversations/{conversation_id}")
+    def delete_conversation(
+        conversation_id: str,
+        user: AuthContext = Depends(get_current_user),
+    ):
+        if user.role != "employee":
+            raise HTTPException(
+                status_code=403,
+                detail="Employee access required",
+            )
+
+        deleted_count = repository.delete_chat_history(
+            employee_id=user.employee_id,
+            conversation_id=conversation_id,
+        )
+
+        return {
+            "status": "deleted",
+            "conversation_id": conversation_id,
+            "deleted_messages": deleted_count,
+        }
     @app.get("/api/v1/traces/{trace_id}")
     def get_trace(
         trace_id: str,
@@ -210,6 +255,12 @@ def create_app(
     def my_leave_requests(
         user: AuthContext = Depends(get_current_user),
     ):
+        if user.role != "employee":
+            raise HTTPException(
+                status_code=403,
+                detail="Employee access required",
+            )
+
         requests = repository.list_leave_requests(
             user.employee_id
         )
@@ -219,12 +270,64 @@ def create_app(
             for item in requests
         ]
 
+    @app.get("/api/v1/hr/leave-requests")
+    def hr_leave_requests(
+        user: AuthContext = Depends(get_current_user),
+    ):
+        if user.role != "hr_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="HR Admin access required",
+            )
+
+        requests = repository.list_hr_leave_requests()
+
+        return [
+            item.model_dump(mode="json")
+            for item in requests
+        ]
+
+    @app.patch("/api/v1/hr/leave-requests/{request_id}/decision")
+    def decide_hr_leave_request(
+        request_id: str,
+        body: HRDecisionRequest,
+        user: AuthContext = Depends(get_current_user),
+    ):
+        if user.role != "hr_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="HR Admin access required",
+            )
+
+        updated = repository.decide_hr_leave_request(
+            request_id=request_id,
+            decision=body.decision,
+        )
+
+        if not updated:
+            raise HTTPException(
+                status_code=409,
+                detail="Pengajuan tidak ditemukan atau sudah diputuskan",
+            )
+
+        return {
+            "request_id": request_id,
+            "status": body.decision,
+            "decided_by": user.employee_id,
+        }
+
     @app.post("/api/v1/action-proposals/{proposal_id}/confirm")
     def confirm_action_proposal(
         proposal_id: str,
         payload: ConfirmActionRequest,
         user: AuthContext = Depends(get_current_user),
     ):
+        if user.role != "employee":
+            raise HTTPException(
+                status_code=403,
+                detail="Employee access required",
+            )
+
         try:
             result = repository.confirm_proposal(
                 employee_id=user.employee_id,

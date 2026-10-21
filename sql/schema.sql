@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS employees (
     employee_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     role TEXT NOT NULL
-        CHECK (role IN ('employee', 'monitoring_admin')),
+        CHECK (role IN ('employee', 'monitoring_admin', 'hr_admin')),
     token_hash TEXT UNIQUE NOT NULL
 );
 
@@ -97,4 +97,21 @@ CREATE TABLE IF NOT EXISTS agent_traces (
     outcome TEXT,
     trace_data JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    employee_id TEXT NOT NULL
+        REFERENCES employees(employee_id),
+    role TEXT NOT NULL
+        CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation
+ON chat_messages (
+    employee_id,
+    conversation_id,
+    message_id
 );
