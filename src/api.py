@@ -15,6 +15,7 @@ def build_runtime(settings: Settings):
     from .agent import AgentService
     from .cache import NullCache
     from .providers import OpenAIProvider, DeterministicProvider
+    from .langchain_provider import LangChainProvider
     from .repository import PostgresRepository
     from .retrieval import RetrievalService
     from .tools import ToolExecutor
@@ -36,12 +37,18 @@ def build_runtime(settings: Settings):
         if not settings.pinecone_api_key:
             raise RuntimeError("PINECONE_API_KEY belum dikonfigurasi.")
 
-        provider = OpenAIProvider(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            embedding_model=settings.embedding_model,
-            embedding_dimensions=settings.embedding_dimensions,
-        )
+        ProviderClass = (
+    LangChainProvider
+    if settings.llm_provider == "langchain"
+    else OpenAIProvider
+)
+
+    provider = ProviderClass(
+    api_key=settings.openai_api_key,
+    model=settings.openai_model,
+    embedding_model=settings.embedding_model,
+    embedding_dimensions=settings.embedding_dimensions,
+)
 
     cache = NullCache()
 

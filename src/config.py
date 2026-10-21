@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, ge=64, le=4096)
     policy_index_version: str = "policies-2026-01"
     model_mode: str = "live"
+    llm_provider: str = "openai"
     max_agent_turns: int = Field(default=4, ge=1, le=8)
     max_tool_calls: int = Field(default=6, ge=1, le=12)
     max_output_tokens: int = Field(default=700, ge=128, le=4096)
