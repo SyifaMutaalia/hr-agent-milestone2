@@ -308,19 +308,60 @@ class MemoryRepository:
         request_id: str,
         decision: str,
     ) -> bool:
-            if decision not in ("approved", "rejected"):
-                raise ValueError("Invalid HR decision")
+        if decision not in ("approved", "rejected"):
+            raise ValueError("Invalid HR decision")
 
-            for requests in self.requests.values():
-                for request in requests:
-                    if request.request_id == request_id:
-                        if request.status != "pending_manager_review":
-                            return False
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT employee_id, leave_type, business_days
+                        FROM leave_requests
+                        WHERE request_id = %s
+                          AND status = 'pending_manager_review'
+                        FOR UPDATE
+                        """,
+                        (request_id,),
+                    )
 
-                    request.status = decision
-                    return True
+                    row = cur.fetchone()
 
-            return False
+                    if row is None:
+                        return False
+
+                    employee_id, leave_type, days = row
+
+                    if decision == "approved":
+                        cur.execute(
+                            """
+                            UPDATE leave_balances
+                            SET available_days = available_days - %s,
+                                as_of_date = CURRENT_DATE
+                            WHERE employee_id = %s
+                              AND leave_type = %s
+                              AND available_days >= %s
+                            RETURNING available_days
+                            """,
+                            (days, employee_id, leave_type, days),
+                        )
+
+                        if cur.fetchone() is None:
+                            raise ValueError(
+                                "Saldo cuti tidak mencukupi"
+                            )
+
+                    cur.execute(
+                        """
+                        UPDATE leave_requests
+                        SET status = %s
+                        WHERE request_id = %s
+                          AND status = 'pending_manager_review'
+                        """,
+                        (decision, request_id),
+                    )
+
+        return True
     def create_ticket(
         self,
         employee_id: str,
@@ -558,7 +599,6 @@ class PostgresRepository:
             for row in rows
         ]
 
-    
     
     def lexical_search(
         self,
@@ -1180,25 +1220,120 @@ class PostgresRepository:
         request_id: str,
         decision: str,
     ) -> bool:
-            if decision not in ("approved", "rejected"):
-                raise ValueError("Invalid HR decision")
+        if decision not in ("approved", "rejected"):
+            raise ValueError("Invalid HR decision")
 
-            with self.pool.connection() as conn:
-                with conn.cursor() as cur:
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT employee_id, leave_type, business_days
+                    FROM leave_requests
+                    WHERE request_id = %s
+                      AND status = 'pending_manager_review'
+                    FOR UPDATE
+                    """,
+                    (request_id,),
+                )
+
+                row = cur.fetchone()
+                if row is None:
+                    return False
+
+                employee_id, leave_type, days = row
+
+                if decision == "approved":
                     cur.execute(
                         """
-                        UPDATE leave_requests
-                        SET status = %s
-                        WHERE request_id = %s
-                        AND status = 'pending_manager_review'
-                        RETURNING request_id
+                        UPDATE leave_balances
+                        SET available_days = available_days - %s,
+                            as_of_date = CURRENT_DATE
+                        WHERE employee_id = %s
+                          AND leave_type = %s
+                          AND available_days >= %s
+                        RETURNING available_days
                         """,
-                        (decision, request_id),
+                        (days, employee_id, leave_type, days),
                     )
 
-                    updated = cur.fetchone()
+                    if cur.fetchone() is None:
+                        raise ValueError(
+                            "Saldo cuti tidak mencukupi atau tidak tersedia"
+                        )
 
-            return updated is not None
+                cur.execute(
+                    """
+                    UPDATE leave_requests
+                    SET status = %s
+                    WHERE request_id = %s
+                      AND status = 'pending_manager_review'
+                    """,
+                    (decision, request_id),
+                )
+
+        return True
+
+    def reset_demo_leave_data(self) -> dict:
+        demo_employees = ("EMP-001", "EMP-002")
+
+        initial_balances = {
+            "EMP-001": {
+                "annual": 8,
+                "sick": 10,
+                "parental": 60,
+            },
+            "EMP-002": {
+                "annual": 3,
+                "sick": 10,
+                "parental": 60,
+            },
+        }
+
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM leave_requests
+                    WHERE employee_id = ANY(%s)
+                    """,
+                    (list(demo_employees),),
+                )
+                deleted_requests = cur.rowcount
+
+                cur.execute(
+                    """
+                    DELETE FROM leave_proposals
+                    WHERE employee_id = ANY(%s)
+                    """,
+                    (list(demo_employees),),
+                )
+                deleted_proposals = cur.rowcount
+
+                for employee_id, balances in initial_balances.items():
+                    for leave_type, days in balances.items():
+                        cur.execute(
+                            """
+                            INSERT INTO leave_balances (
+                                employee_id,
+                                leave_type,
+                                available_days,
+                                as_of_date
+                            )
+                            VALUES (%s, %s, %s, DATE '2026-01-01')
+                            ON CONFLICT (employee_id, leave_type)
+                            DO UPDATE SET
+                                available_days = EXCLUDED.available_days,
+                                as_of_date = EXCLUDED.as_of_date
+                            """,
+                            (employee_id, leave_type, days),
+                        )
+
+        return {
+            "status": "reset",
+            "deleted_requests": deleted_requests,
+            "deleted_proposals": deleted_proposals,
+            "employees_reset": list(demo_employees),
+        }
     def save_chat_message(
         self,
         employee_id: str,

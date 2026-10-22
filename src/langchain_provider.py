@@ -133,7 +133,15 @@ class LangChainProvider:
             messages,
             max_tokens=max_output_tokens,
         )
-
+        print(
+            "[LANGCHAIN DIAGNOSTIC]",
+            f"content_type={type(response.content).__name__}",
+            f"content_empty={not bool(response.content)}",
+            f"tool_calls={len(response.tool_calls)}",
+            f"finish_reason={response.response_metadata.get('finish_reason')}",
+            f"usage={response.usage_metadata}",
+            flush=True,
+        )
         tool_calls = [
             ModelToolCall(
                 call_id=call["id"],
@@ -160,7 +168,13 @@ class LangChainProvider:
             text=(
                 response.content
                 if isinstance(response.content, str)
-                else ""
+                else "\n".join(
+                    block.get("text", "")
+                    for block in response.content
+                    if isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                )
             ),
             tool_calls=tool_calls,
             output_items=output_items,

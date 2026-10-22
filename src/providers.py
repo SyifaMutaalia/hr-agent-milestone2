@@ -73,6 +73,16 @@ class OpenAIProvider:
             max_output_tokens=max_output_tokens,
             safety_identifier=safety_identifier,
         )
+        print(
+            "[OPENAI DIAGNOSTIC]",
+            f"status={response.status}",
+            f"incomplete_details={response.incomplete_details}",
+            f"output_types={[item.type for item in response.output]}",
+            f"output_tokens={response.usage.output_tokens if response.usage else None}",
+            f"max_output_tokens={max_output_tokens}",
+            f"has_text={bool(response.output_text)}",
+            flush=True,
+        )
 
         tool_calls = []
 

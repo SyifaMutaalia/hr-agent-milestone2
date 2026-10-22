@@ -1,5 +1,5 @@
 "use client";
-
+import ResetDemoButton from "@/components/ResetDemoButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, ArrowRight, Bell, BookOpen, BriefcaseBusiness, CalendarDays, Check, CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, LayoutDashboard, LogOut, Menu, MessageCircle, Moon, Plus, Search, Send, ShieldCheck, Sparkles, Sun, Trash2, UserRound, Users, X } from "lucide-react";
 import { Conversation, DemoData, Leave, Page, Role, ChatMessage, employeeName } from "@/lib/types";
@@ -103,10 +103,71 @@ export default function Home() {
 ).length;
   const currentAccount = accounts.find(a => a.role === role);
 
-  function login() { sessionStorage.setItem(SESSION_KEY, selectedRole); setRole(selectedRole); setActiveId(null); setDraft({}); setPage(selectedRole === "hr" ? "leaves" : selectedRole === "monitor" ? "monitor" : "chat"); if (selectedRole === "hr") {
-    void loadHRRequests();
-  }}
-  function logout() { sessionStorage.removeItem(SESSION_KEY); setRole(null); setActiveId(null); setInput(""); setDraft({}); setSidebarOpen(false); }
+  async function login() {
+  if (busy) return;
+  setBusy(true);
+
+  try {
+    const response = await fetch("/api/demo-login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ role: selectedRole }),
+    });
+
+    if (!response.ok) {
+      setToast("Gagal masuk ke akun demo. Silakan coba kembali.");
+      return;
+    }
+
+    sessionStorage.setItem(SESSION_KEY, selectedRole);
+    setRole(selectedRole);
+    setActiveId(null);
+    setDraft({});
+    setPage(
+      selectedRole === "hr"
+        ? "leaves"
+        : selectedRole === "monitor"
+          ? "monitor"
+          : "chat"
+    );
+
+    if (selectedRole === "hr") {
+      void loadHRRequests();
+    }
+  } catch {
+    setToast("Layanan login demo sedang mengalami kendala.");
+  } finally {
+    setBusy(false);
+  }
+}
+  async function logout() {
+  if (busy) return;
+  setBusy(true);
+
+  try {
+    const response = await fetch("/api/demo-logout", {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      setToast("Gagal keluar dari akun demo. Silakan coba kembali.");
+      return;
+    }
+
+    sessionStorage.removeItem(SESSION_KEY);
+    setRole(null);
+    setActiveId(null);
+    setInput("");
+    setDraft({});
+    setSidebarOpen(false);
+  } catch {
+    setToast("Gagal mengakhiri sesi demo. Silakan coba kembali.");
+  } finally {
+    setBusy(false);
+  }
+}
   function go(next: Page) { setPage(next); setSidebarOpen(false); if (next === "leaves" && role && isEmployee(role)) void loadMyRequests(); if (next === "monitor" && role === "monitor") void loadMonitoring(); if (next === "leaves" && role === "hr") {
   void loadHRRequests();
 }}
@@ -373,6 +434,7 @@ async function decideHRLeave(
         <div className="nav-group"><div className="nav-caption">WORKSPACE</div><button className={`nav-item ${page === "chat" ? "active" : ""}`} onClick={() => go("chat")}><MessageCircle size={18}/> Percakapan</button><button className={`nav-item ${page === "history" ? "active" : ""}`} onClick={() => go("history")}><History size={18}/> Riwayat chat</button><button className={`nav-item ${page === "leaves" ? "active" : ""}`} onClick={() => go("leaves")}><CalendarDays size={18}/> Pengajuan cuti</button></div>
         <div className="nav-group history-group"><div className="nav-caption">TERBARU <span>{conversations.length}</span></div>{conversations.slice(0,6).map(c => <button key={c.id} className={`recent-item ${activeId === c.id && page === "chat" ? "current" : ""}`} onClick={() => openConversation(c.id)}><MessageCircle size={15}/><span>{c.title}</span></button>)}{conversations.length === 0 && <p className="empty-history">Belum ada percakapan</p>}</div></>}
         {role === "hr" && <div className="nav-group"><div className="nav-caption">HR WORKSPACE</div><button className={`nav-item ${page === "leaves" ? "active" : ""}`} onClick={() => go("leaves")}><LayoutDashboard size={18}/> Dashboard HR {pendingCount > 0 && <span className="nav-count">{pendingCount}</span>}</button></div>}
+        {role === "hr" && <ResetDemoButton onReset={() => {updateData(prev => ({ ...prev, leaves: prev.leaves.filter(l => l.employee !== "alya" && l.employee !== "bima") })); }} />}
         {role === "monitor" && <div className="nav-group"><div className="nav-caption">ADMIN WORKSPACE</div><button className={`nav-item ${page === "monitor" ? "active" : ""}`} onClick={() => go("monitor")}><Activity size={18}/> Monitoring</button></div>}
       </div>
       <div className="sidebar-bottom"><div className="theme-box"><div className="theme-title"><Sun size={16}/> Tampilan</div><div className="theme-options"><button title="Terang" className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")}><Sun size={16}/></button><button title="Gelap" className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")}><Moon size={16}/></button><button title="Sistem" className={theme === "system" ? "selected" : ""} onClick={() => setTheme("system")}><span className="system-symbol">◐</span></button></div></div>

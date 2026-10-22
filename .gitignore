@@ -7,3 +7,30 @@ outputs/*.json
 outputs/*.md
 .streamlit/secrets.toml
 *.bak
+# Environment & secrets
+.env
+.env.*
+!.env.example
+!.env*.example
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Next.js
+node_modules/
+.next/
+.vercel/
+
+# Local outputs
+outputs/*.json
+.streamlit/secrets.toml
+*.bak
+
+# Backup & local development
+src/agent_backup.py
+hr-agent-nextjs/app/api-backup/

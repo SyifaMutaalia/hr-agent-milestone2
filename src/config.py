@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     app_name: str = "HR Policy and Leave Assistant"
     environment: str = "development"
+    demo_reset_enabled: bool = False
     database_url: str = ""
     redis_url: str = "redis://redis:6379/0"
     #gemini_api_key: str | None = None

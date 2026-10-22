@@ -123,21 +123,41 @@ http://localhost:8000/docs
 
 Keep this terminal running.
 
-## 6. Run the Streamlit Frontend
+atau
+```bash
+uv run uvicorn src.api:app --host 127.0.0.1 --port 8000 --http h11 --log-level debug
+```
+
+## 6. Run the UI Frontend
 
 Open a second terminal in the project directory.
 
 Activate the Python virtual environment and run:
 
 ```bash
-streamlit run app.py
+cd hr-agent-nextjs
+npm run dev
 ```
 
-Open the Streamlit interface:
+Open the HR Agent interface:
 
-http://localhost:8501
+- Local:        http://127.0.0.1:3000
+- Network:      http://127.0.0.1:3000
 
 The frontend must be configured to communicate with the FastAPI backend.
+
+## Run using Link vercel
+Accessing the Deployed Application
+
+Users do not need to install Python or Node.js, nor do they need to use a terminal.
+
+Simply open the HR Agent frontend link:
+
+Application URL: https://<frontend-project-name>.vercel.app
+
+The link can be accessed via a web browser on any laptop, computer, or smartphone connected to the internet.
+
+The FastAPI backend runs separately on Vercel and is automatically utilized by the frontend.
 
 ## 7. Run with Docker
 

@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { callBackend } from "@/lib/backend";
+import { getDemoSessionRole } from "@/lib/demo-session";
 
 export async function GET() {
   try {
+    const role = await getDemoSessionRole();
+
+    if (role !== "hr") {
+      return NextResponse.json(
+        { detail: "Akses hanya untuk HR Admin." },
+        { status: 403 }
+      );
+    }
+
     const response = await callBackend(
       "hr",
       "/api/v1/hr/leave-requests"
@@ -13,10 +23,12 @@ export async function GET() {
     return NextResponse.json(data, {
       status: response.status,
     });
-  } catch {
+  } catch (error) {
+    console.error("[HR_LEAVES_ERROR]", error);
+
     return NextResponse.json(
-      { error: "Gagal mengambil data pengajuan cuti HR." },
-      { status: 502 }
+      { detail: "Data pengajuan belum dapat dimuat." },
+      { status: 500 }
     );
   }
 }

@@ -28,6 +28,27 @@ def business_days(start: date, end: date) -> int:
 
     return total
 
+def validate_annual_leave_notice(
+    start_date: date,
+    today: date,
+) -> None:
+    """Validasi tenggat pengajuan cuti tahunan."""
+
+    if start_date < today:
+        raise DomainError(
+            "tanggal mulai tidak boleh berada di masa lalu"
+        )
+
+    working_days_notice = sum(
+        (today + timedelta(days=offset)).weekday() < 5
+        for offset in range(1, (start_date - today).days)
+    )
+
+    if working_days_notice < 3:
+        raise DomainError(
+            "cuti tahunan harus diajukan minimal "
+            "3 hari kerja sebelum tanggal mulai"
+        )
 
 def validate_leave_request(
     args: PrepareLeaveArgs,
@@ -42,6 +63,17 @@ def validate_leave_request(
 
     if args.end_date < args.start_date:
         raise DomainError("tanggal akhir tidak boleh sebelum tanggal mulai")
+
+    # Annual leave must be submitted at least three working days in advance.
+    if args.leave_type == "annual":
+        validate_annual_leave_notice(
+            start_date=args.start_date,
+            today=today,
+        )
+        if working_days_notice < 3:
+            raise DomainError(
+                "cuti tahunan harus diajukan minimal 3 hari kerja sebelum tanggal mulai"
+            )
 
     days = business_days(args.start_date, args.end_date)
 

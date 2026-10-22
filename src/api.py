@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from typing import Literal
-
+from .demo_reset import demo_reset_router
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
@@ -322,6 +322,26 @@ def create_app(
             "status": body.decision,
             "decided_by": user.employee_id,
         }
+    @app.post("/api/v1/hr/demo/reset")
+    def reset_hr_demo(
+        user: AuthContext = Depends(get_current_user),
+    ):
+        if user.role != "hr_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="HR Admin access required",
+            )
+
+        if (
+            settings.environment != "development"
+            or not settings.demo_reset_enabled
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Demo reset is disabled",
+            )
+
+        return repository.reset_demo_leave_data()
 
     @app.post("/api/v1/action-proposals/{proposal_id}/confirm")
     def confirm_action_proposal(

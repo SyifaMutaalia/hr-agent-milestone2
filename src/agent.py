@@ -1,12 +1,13 @@
-
 from __future__ import annotations
+from datetime import date, timedelta
 
+
+from .domain import DomainError, validate_annual_leave_notice
 import hashlib
 import json
 import re
 from time import perf_counter
 from uuid import uuid4
-
 from .config import Settings
 from .contracts import (
     ActionProposal,
@@ -40,7 +41,7 @@ Alur pengajuan cuti:
 8. Jika perlu mengetahui ketentuan cuti, gunakan search_hr_policy
    sebelum menyiapkan proposal.
 9. Jika data wajib pengajuan belum lengkap, minta klarifikasi.
-Jika pengguna menyampaikan keinginan mengajukan cuti tetapi
+10. Jika pengguna menyampaikan keinginan mengajukan cuti tetapi
 belum memberikan tanggal mulai, tanggal selesai, jenis cuti,
 atau alasan, jangan langsung mencari kebijakan HR.
 
@@ -62,6 +63,22 @@ Keamanan:
 14. Jangan menampilkan chain-of-thought atau informasi rahasia.
 15. Jangan membuat tiket HR tanpa permintaan pengguna.
 16. Jika informasi tidak cukup, jelaskan keterbatasannya.
+
+Penanganan permintaan cuti yang belum lengkap:
+- Kenali variasi permintaan seperti "siapkan cuti",
+  "buatkan cuti", "ambil cuti", "mau cuti",
+  dan "cuti tahunan mulai besok".
+- Jika pengguna sudah menyebut jenis cuti, jangan
+  menanyakan jenis cuti lagi.
+- Jika pengguna menyebut "besok", pahami sebagai
+  tanggal setelah tanggal saat ini.
+- Jika tanggal selesai atau alasan belum tersedia,
+  tanyakan hanya informasi yang masih kurang.
+- Jangan memanggil prepare_leave_request sebelum
+  semua parameter wajib tersedia.
+- Jangan membuat proposal tanpa validasi.
+- Jangan menganggap klarifikasi sebagai klaim
+  kebijakan HR yang membutuhkan sitasi.
 """
 
 
@@ -101,7 +118,34 @@ class AgentService:
         error_code = None
 
         conversation_id = request.conversation_id
+        message_lower = request.message.lower().strip()
 
+        annual_leave_intent = (
+            "cuti tahunan" in message_lower
+            and "besok" in message_lower
+            and any(
+                phrase in message_lower
+                for phrase in (
+                    "siapkan",
+                    "ajukan",
+                    "buatkan",
+                    "ambil",
+                    "mau",
+                    "ingin",
+                )
+            )
+        )
+
+        early_validation_error = None
+
+        if auth.role == "employee" and annual_leave_intent:
+            try:
+                validate_annual_leave_notice(
+                    start_date=date.today() + timedelta(days=1),
+                    today=date.today(),
+                )
+            except DomainError as exc:
+                early_validation_error = str(exc)
         history: list[dict] = []
 
         if conversation_id:
@@ -121,227 +165,354 @@ class AgentService:
         ).hexdigest()
 
         try:
-            for turn_number in range(
-                self.settings.max_agent_turns
-            ):
-                # Batasi pemanggilan tool setelah batas tercapai.
-                available_tools = (
-                    TOOL_SCHEMAS
-                    if tool_count < self.settings.max_tool_calls
-                    else []
+            if early_validation_error is not None:
+                result = self.tools.execute(
+                    tool_name="search_hr_policy",
+                    arguments={
+                        "query": (
+                            "Kebijakan Cuti Tahunan "
+                            "batas waktu pengajuan minimal "
+                            "tiga hari kerja sebelum tanggal mulai"
+                        ),
+                    "top_k": 5,
+                    },
+                    auth=auth,
                 )
 
-                model_input = history
+                retrieved_docs = result.get("documents", [])
 
-                turn = self.provider.respond(
-                    input_data=model_input,
-                    instructions=SYSTEM_INSTRUCTIONS,
-                    tools=available_tools,
-                    safety_identifier=safety_identifier,
-                    max_output_tokens=self.settings.max_output_tokens,
-                )
-
-                input_tokens += turn.input_tokens
-                output_tokens += turn.output_tokens
-
-                if turn.tool_calls:
-                    remaining = (
-                        self.settings.max_tool_calls - tool_count
-                    )
-                    history.extend(turn.output_items)
-
-                    if len(turn.tool_calls) > remaining:
-                        error_code = "tool_limit_exceeded"
-                        break
-
-                    
-                    allowed_names = {
-                        tool["name"] for tool in TOOL_SCHEMAS
-                    }
-
-                    if any(
-                        call.name not in allowed_names
-                        for call in turn.tool_calls
-                    ):
-                        error_code = "unknown_tool"
-                        break
-
-                    for call in turn.tool_calls:
-                        tool_started = perf_counter()
-                        tool_count += 1
-                        status = "ok"
-
-                        try:
-                            if call.name == "create_hr_ticket":
-                                message_lower = request.message.lower()
-                                explicit_request = any(
-                                    phrase in message_lower
-                                    for phrase in (
-                                        "buat tiket",
-                                        "buatkan tiket",
-                                        "hubungi hr",
-                                        "eskalasi ke hr",
-                                        "laporkan ke hr",
-                                    )
-                                )
-                                if not explicit_request:
-                                    raise PermissionError(
-                                        "Ticket creation not authorized"
-                                    )
-
-                            result = self.tools.execute(
-                                tool_name=call.name,
-                                arguments=call.arguments,
-                                auth=auth,
-                            )
-
-                            if call.name == "search_hr_policy":
-                                for doc in result.get(
-                                    "documents", []
-                                ):
-                                    doc_id = doc.get("document_id")
-                                    if doc_id:
-                                        documents[doc_id] = doc
-
-                            elif call.name == "prepare_leave_request":
-                                if "proposal" in result:
-                                    proposal = (
-                                        ActionProposal.model_validate(
-                                            result["proposal"]
-                                        )
-                                    )
-
-                            elif call.name == "create_hr_ticket":
-                                ticket_created = (
-                                    result.get("status") == "created"
-                                )
-
-                        except PermissionError:
-                            status = "blocked"
-                            result = {
-                                "error": "Action not authorized"
-                            }
-
-                        except Exception:
-                            status = "error"
-                            result = {
-                                "error": "Tool execution failed"
-                            }
-
-                        duration_ms = int(
-                            (perf_counter() - tool_started) * 1000
-                        )
-
-                        summaries.append(
-                            ToolCallSummary(
-                                name=call.name,
-                                status=status,
-                                duration_ms=duration_ms,
-                            )
-                        )
-
-                        history.append(
-                            {
-                                "type": "function_call_output",
-                                "call_id": call.call_id,
-                                "output": json.dumps(
-                                    result,
-                                    ensure_ascii=False,
-                                    default=str,
-                                ),
-                            }
-                        )
-
-                    continue
-
-                answer = turn.text.strip()
-
-                if not answer:
-                    error_code = "empty_answer"
-                    break
-
-                if documents:
-                    cited_ids = set(
-                        re.findall(
-                            r"\[(HR-[A-Z0-9-]+)\]",
-                            answer,
+                # Hanya terima dokumen yang relevan dengan aturan.
+                matching_docs = [
+                    doc for doc in retrieved_docs
+                    if doc.get("document_id") == "HR-LEAVE-001"
+                    and (
+                        "hari kerja" in doc.get("content", "").lower()
+                        and (
+                            "pengajuan" in doc.get("content", "").lower()
+                            or "sebelum" in doc.get("content", "").lower()
                         )
                     )
+                ]
 
-                    valid_ids = set(documents)
+                if matching_docs:
+                    doc = matching_docs[0]
+                    doc_id = doc["document_id"]
 
-                    if (
-                        not cited_ids
-                        or not cited_ids.issubset(valid_ids)
-                    ):
-                        error_code = "invalid_citation"
-                        answer = ""
-                        break
+                    documents[doc_id] = doc
+
+                    answer = (
+                        f"Berdasarkan {doc['title']}, "
+                        "pengajuan cuti tahunan harus dilakukan "
+                        "minimal 3 hari kerja sebelum tanggal mulai. "
+                        "Karena kamu ingin mengajukan cuti mulai besok, "
+                        "permintaan tersebut tidak memenuhi ketentuan "
+                        "pengajuan normal. Silakan pilih tanggal lain "
+                        "atau hubungi HR untuk menanyakan kemungkinan "
+                        f"pengecualian. [{doc_id}]"
+                    )
 
                     citations = [
                         Citation(
                             document_id=doc_id,
-                            title=documents[doc_id]["title"],
-                            section=documents[doc_id]["section"],
-                            excerpt=documents[doc_id]["content"][:300],
+                            title=doc["title"],
+                            section=doc["section"],
+                            excerpt=doc["content"][:300],
                         )
-                        for doc_id in sorted(cited_ids)
                     ]
 
-                if proposal is not None:
-                    outcome = "action_proposed"
-                elif ticket_created:
-                    outcome = "escalated"
-                elif documents or summaries:
-                    outcome = "answered"
-                elif (
-                    turn.response_id == "deterministic-clarify"
-                    and auth.role == "employee"
-                ):
-                    outcome = "answered"
-                elif (
-                    auth.role == "employee"
-                    and not documents
-                    and not summaries
-                    and not turn.tool_calls
-                    and any(
-                        phrase in request.message.lower()
-                        for phrase in (
-                            "mau cuti",
-                            "ingin cuti",
-                            "ajukan cuti",
-                            "mengajukan cuti",
-                            "minta cuti",
-                        )
-                    )
-                ):
-                    answer = (
-                        "Tentu, saya bisa membantu menyiapkan pengajuan cuti. "
-                        "Mohon informasikan tanggal mulai, tanggal selesai, "
-                        "jenis cuti, dan alasan pengajuan."
-                    )
-                    outcome = "answered"
                 else:
-                    error_code = "insufficient_evidence"
-                    answer = ""
-                    break
+                    answer = (
+                        "Pengajuan cuti tahunan mulai besok tidak "
+                        "memenuhi validasi tenggat pengajuan normal. "
+                        "Namun, dokumen kebijakan yang mendukung "
+                        "ketentuan tersebut belum berhasil diverifikasi. "
+                        "Silakan hubungi HR untuk konfirmasi."
+                    )
 
-                break
+                outcome = "answered"
 
             else:
-                error_code = "turn_limit_exceeded"
+                for turn_number in range(
+                    self.settings.max_agent_turns
+                ):
+                # Batasi pemanggilan tool setelah batas tercapai.
+                    available_tools = (
+                        TOOL_SCHEMAS
+                        if tool_count < self.settings.max_tool_calls
+                        else []
+                    )
+
+                    model_input = history
+
+                    turn = self.provider.respond(
+                        input_data=model_input,
+                        instructions=SYSTEM_INSTRUCTIONS,
+                        tools=available_tools,
+                        safety_identifier=safety_identifier,
+                        max_output_tokens=self.settings.max_output_tokens,
+                    )
+
+                    input_tokens += turn.input_tokens
+                    output_tokens += turn.output_tokens
+
+                    if turn.tool_calls:
+                        remaining = (
+                            self.settings.max_tool_calls - tool_count
+                        )
+                        history.extend(turn.output_items)
+
+                        if len(turn.tool_calls) > remaining:
+                            error_code = "tool_limit_exceeded"
+                            break
+
+                    
+                        allowed_names = {
+                            tool["name"] for tool in TOOL_SCHEMAS
+                        }
+
+                        if any(
+                            call.name not in allowed_names
+                            for call in turn.tool_calls
+                        ):
+                            error_code = "unknown_tool"
+                            break
+
+                        for call in turn.tool_calls:
+                            tool_started = perf_counter()
+                            tool_count += 1
+                            status = "ok"
+
+                            try:
+                                if call.name == "create_hr_ticket":
+                                    message_lower = request.message.lower()
+                                    explicit_request = any(
+                                        phrase in message_lower
+                                        for phrase in (
+                                            "buat tiket",
+                                            "buatkan tiket",
+                                            "hubungi hr",
+                                            "eskalasi ke hr",
+                                            "laporkan ke hr",
+                                        )
+                                    )
+                                    if not explicit_request:
+                                        raise PermissionError(
+                                            "Ticket creation not authorized"
+                                        )
+
+                                result = self.tools.execute(
+                                    tool_name=call.name,
+                                    arguments=call.arguments,
+                                    auth=auth,
+                                )
+
+                                if call.name == "search_hr_policy":
+                                    for doc in result.get(
+                                        "documents", []
+                                    ):
+                                        doc_id = doc.get("document_id")
+                                        if doc_id:
+                                            documents[doc_id] = doc
+
+                                elif call.name == "prepare_leave_request":
+                                    if "proposal" in result:
+                                        proposal = (
+                                            ActionProposal.model_validate(
+                                                result["proposal"]
+                                            )
+                                        )
+
+                                elif call.name == "create_hr_ticket":
+                                    ticket_created = (
+                                        result.get("status") == "created"
+                                    )
+
+                            except PermissionError:
+                                status = "blocked"
+                                result = {
+                                    "error": "Action not authorized"
+                                }
+                            except DomainError as exc:
+                                status = "error"
+                                result = {
+                                    "error": "leave_validation_failed",
+                                    "reason": str(exc),
+                                }
+                                print(
+                                    "[LEAVE VALIDATION]",
+                                    f"tool={call.name}",
+                                    f"reason={str(exc)}",
+                                    flush=True,
+                                )
+
+                            except Exception as exc:
+                                print(
+                                    "[TOOL ERROR]",
+                                    f"tool={call.name}",
+                                    f"error_type={type(exc).__name__}",
+                                    flush=True,
+                                )
+                                status = "error"
+                                result = {
+                                    "error": "Tool execution failed"
+                                }
+
+                            duration_ms = int(
+                                (perf_counter() - tool_started) * 1000
+                            )
+
+                            summaries.append(
+                                ToolCallSummary(
+                                    name=call.name,
+                                    status=status,
+                                    duration_ms=duration_ms,
+                                )
+                            )
+
+                            history.append(
+                                {
+                                    "type": "function_call_output",
+                                    "call_id": call.call_id,
+                                    "output": json.dumps(
+                                        result,
+                                        ensure_ascii=False,
+                                        default=str,
+                                    ),
+                                }
+                            )
+
+                        continue
+
+                    answer = turn.text.strip()
+
+                    if not answer:
+                        error_code = "empty_answer"
+                        break
+
+                    if documents:
+                        cited_ids = set(
+                            re.findall(
+                                r"\[(HR-[A-Z0-9-]+)\]",
+                                answer,
+                            )
+                        )
+
+                        valid_ids = set(documents)
+
+                        if (
+                            not cited_ids
+                            or not cited_ids.issubset(valid_ids)
+                        ):
+                            error_code = "invalid_citation"
+                            answer = ""
+                            break
+
+                        citations = [
+                            Citation(
+                                document_id=doc_id,
+                                title=documents[doc_id]["title"],
+                                section=documents[doc_id]["section"],
+                                excerpt=documents[doc_id]["content"][:300],
+                            )
+                            for doc_id in sorted(cited_ids)
+                        ]
+
+                    if proposal is not None:
+                        outcome = "action_proposed"
+                    elif ticket_created:
+                        outcome = "escalated"
+                    elif documents or summaries:
+                        outcome = "answered"
+                    elif (
+                        turn.response_id == "deterministic-clarify"
+                        and auth.role == "employee"
+                    ):
+                        outcome = "answered"
+                    elif (
+                        auth.role == "employee"
+                        and not documents
+                        and not summaries
+                        and not turn.tool_calls
+                        and "?" in answer
+                        and any(
+                            phrase in answer.lower()
+                            for phrase in (
+                                "tanggal",
+                                "kapan",
+                                "alasan",
+                                "jenis cuti",
+                                "berapa hari",
+                            )
+                        )
+                    ):
+                        # Hanya izinkan pertanyaan klarifikasi,
+                        # bukan klaim kebijakan atau persetujuan cuti.
+                        outcome = "answered"
+                    elif (
+                        auth.role == "employee"
+                        and not documents
+                        and not summaries
+                        and not turn.tool_calls
+                        and any(
+                            phrase in request.message.lower()
+                            for phrase in (
+                                "mau cuti",
+                                "ingin cuti",
+                                "ajukan cuti",
+                                "mengajukan cuti",
+                                "minta cuti",
+                                "siapkan cuti",
+                                "buatkan cuti",
+                                "ambil cuti",
+                                "cuti tahunan",
+                                "cuti sakit",
+                                "cuti orang tua",
+                            )
+                        )
+                    ):
+                        message_lower = request.message.lower()
+
+                        if "tahunan" in message_lower:
+                            answer = (
+                                "Baik, saya bantu menyiapkan pengajuan cuti tahunan. "
+                                "Mohon informasikan tanggal selesai dan alasan "
+                                "pengajuan cuti Anda."
+                            )
+                        else:
+                            answer = (
+                                "Baik, saya bantu menyiapkan pengajuan cuti. "
+                                "Mohon informasikan jenis cuti, tanggal mulai, "
+                                "tanggal selesai, dan alasan pengajuannya."
+                            )
+                        outcome = "answered"
+                    else:
+                        error_code = "insufficient_evidence"
+                        answer = ""
+                        break
+
+                    break
+
+                else:
+                    error_code = "turn_limit_exceeded"
 
         except Exception as exc:
             print(
                 "[AGENT ERROR]",
-                f"type={type(exc).__name__}",
-                f"status_code={getattr(exc, 'status_code', None)}",
-                f"code={getattr(exc, 'code', None)}",
-                f"message={str(exc)}",
+                f"trace_id={trace_id}",
+                f"error_type={type(exc).__name__}",
                 flush=True,
             )
-            error_code = "provider_error"
-
+            error_code = "internal_error"
+        if error_code is not None:
+            print(
+                "[AGENT DIAGNOSTIC]",
+                f"trace_id={trace_id}",
+                f"error_code={error_code}",
+                f"tool_count={tool_count}",
+                f"outcome={outcome}",
+                flush=True,
+            )
+            
         if outcome == "abstained":
             answer = (
                 "Maaf, saya belum dapat memberikan jawaban "

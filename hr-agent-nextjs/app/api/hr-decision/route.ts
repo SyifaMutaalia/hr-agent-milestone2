@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callBackend } from "@/lib/backend";
+import { getDemoSessionRole } from "@/lib/demo-session";
 
 export async function PATCH(request: NextRequest) {
   try {
+    const role = await getDemoSessionRole();
+
+    if (role !== "hr") {
+      return NextResponse.json(
+        { detail: "Akses hanya untuk HR Admin." },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { request_id, decision } = body;
 
@@ -12,7 +22,7 @@ export async function PATCH(request: NextRequest) {
       !["approved", "rejected"].includes(decision)
     ) {
       return NextResponse.json(
-        { detail: "Data keputusan tidak valid" },
+        { detail: "Data keputusan tidak valid." },
         { status: 400 }
       );
     }
@@ -30,10 +40,10 @@ export async function PATCH(request: NextRequest) {
       status: response.status,
     });
   } catch (error) {
-    console.error("HR decision error:", error);
+    console.error("[HR_DECISION_ERROR]", error);
 
     return NextResponse.json(
-      { detail: "Gagal memproses keputusan HR" },
+      { detail: "Keputusan belum dapat diproses. Silakan coba kembali." },
       { status: 500 }
     );
   }

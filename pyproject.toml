@@ -33,3 +33,6 @@ target-version = "py311"
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.vercel]
+entrypoint = "src.api:app"
