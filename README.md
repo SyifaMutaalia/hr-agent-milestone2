@@ -4,6 +4,10 @@ An AI-powered Human Resources assistant developed for **Hacktiv8 AI Engineer —
 
 This application helps employees access HR policies through natural-language conversations and supports leave request workflows with human confirmation and manager review.
 
+The PPT:
+```bash
+ "https://drive.google.com/file/d/1GxojOVB87_KErA_dtXSBafZV_1DHmkus/view?usp=sharing"
+```
 ## Features
 
 - **AI-Powered HR Assistant:** Answers employee questions about HR policies.
@@ -146,6 +150,12 @@ Open the HR Agent interface:
 
 The frontend must be configured to communicate with the FastAPI backend.
 
+Mode Demo: masukkan username dan password
+ALYA: "Alyaputri123@gmail.com; Alyaputri123"
+Bima: "Bimapratama456@gmail.com; Bimapratama456"
+HR: "Syifamutaalia@gmail.com; Syifamutaalia"
+Monitoring: "Monitoring01@gmail.com; Monitoring01"
+
 ## Run using Link vercel
 Accessing the Deployed Application
 
@@ -153,7 +163,7 @@ Users do not need to install Python or Node.js, nor do they need to use a termin
 
 Simply open the HR Agent frontend link:
 
-Application URL: https://<frontend-project-name>.vercel.app
+Application URL: https://hr-agent-web-gilt.vercel.app/
 
 The link can be accessed via a web browser on any laptop, computer, or smartphone connected to the internet.
 

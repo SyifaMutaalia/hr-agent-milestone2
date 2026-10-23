@@ -17,6 +17,7 @@ dependencies = [
     "pandas>=3.0.6",
     "langchain>=1.4.6",
     "langchain-openai>=1.7.2",
+    "argon2-cffi>=25.1.0",
 ]
 
 [tool.pytest.ini_options]

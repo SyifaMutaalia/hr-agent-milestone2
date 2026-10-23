@@ -24,3 +24,64 @@ export async function callBackend(role: string, path: string, method = "GET", pa
     return NextResponse.json(result, { status: res.status });
   } catch { return NextResponse.json({ error: "Backend FastAPI tidak dapat dihubungi." }, { status: 502 }); }
 }
+import { cookies } from "next/headers";
+
+export const SESSION_COOKIE_NAME = "hr_agent_session";
+
+export async function callAuthenticatedBackend(
+  path: string,
+  method = "GET",
+  payload?: unknown
+) {
+  const base = process.env.FASTAPI_URL;
+
+  if (!base) {
+    return NextResponse.json(
+      { error: "FASTAPI_URL belum dikonfigurasi." },
+      { status: 503 }
+    );
+  }
+
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+
+  if (!token) {
+    return NextResponse.json(
+      { error: "Silakan login terlebih dahulu." },
+      { status: 401 }
+    );
+  }
+
+  try {
+    const res = await fetch(
+      `${base.replace(/\/$/, "")}${path}`,
+      {
+        method,
+        cache: "no-store",
+        signal: AbortSignal.timeout(45000),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(payload !== undefined
+            ? { "Content-Type": "application/json" }
+            : {}),
+        },
+        ...(payload !== undefined
+          ? { body: JSON.stringify(payload) }
+          : {}),
+      }
+    );
+
+    const result = await res.json().catch(() => ({
+      detail: `HTTP ${res.status}`,
+    }));
+
+    return NextResponse.json(result, {
+      status: res.status,
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "Backend FastAPI tidak dapat dihubungi." },
+      { status: 502 }
+    );
+  }
+}

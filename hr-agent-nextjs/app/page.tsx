@@ -13,7 +13,32 @@ const accounts: { role: Role; name: string; title: string; initials: string; col
 ];
 const greetings = ["Berapa saldo cuti saya?", "Hai, mau cuti nih", "Bagaimana kebijakan kerja remote?", "Lihat status pengajuan cuti saya"];
 const isEmployee = (r: Role) => r === "alya" || r === "bima";
+function getHistoryGroup(timestamp: number): string {
+  const now = new Date();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
 
+  const chatDate = new Date(timestamp);
+  const chatDay = new Date(
+    chatDate.getFullYear(),
+    chatDate.getMonth(),
+    chatDate.getDate()
+  );
+
+  const daysAgo = Math.round(
+    (today.getTime() - chatDay.getTime()) / 86400000
+  );
+
+  if (daysAgo <= 0) return "Hari ini";
+  if (daysAgo === 1) return "Kemarin";
+  if (daysAgo < 7) return "7 hari terakhir";
+  if (daysAgo < 30) return "30 hari terakhir";
+
+  return "Lebih lama";
+}
 export default function Home() {
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<Role | null>(null);
@@ -57,19 +82,104 @@ export default function Home() {
 }, [ready, role]);
   const updateData = useCallback((fn: (prev: DemoData) => DemoData) => { const next = fn(dataRef.current); dataRef.current = next; setData(next); saveData(next); }, []);
 
+  
   useEffect(() => {
+    let cancelled = false;
+
     setData(loadData());
-    const savedRole = sessionStorage.getItem(SESSION_KEY) as Role | null;
-    if (savedRole && accounts.some(a => a.role === savedRole)) { setRole(savedRole); setPage(savedRole === "hr" ? "leaves" : savedRole === "monitor" ? "monitor" : "chat"); }
-    const savedTheme = localStorage.getItem("nusahr-theme") as "light" | "dark" | "system" | null;
-    if (savedTheme && ["light", "dark", "system"].includes(savedTheme)) setTheme(savedTheme);
-    const onStorage = (e: StorageEvent) => { if (e.key === "nusahr-demo-v1") setData(loadData()); };
+
+    const savedTheme = localStorage.getItem("nusahr-theme") as
+      | "light"
+      | "dark"
+      | "system"
+      | null;
+
+    if (
+      savedTheme &&
+      ["light", "dark", "system"].includes(savedTheme)
+    ) {
+      setTheme(savedTheme);
+    }
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "nusahr-demo-v1") {
+        setData(loadData());
+      }
+    };
+
     const onUpdate = () => setData(loadData());
+
     window.addEventListener("storage", onStorage);
     window.addEventListener("nusahr-updated", onUpdate);
-    setReady(true);
-    return () => { window.removeEventListener("storage", onStorage); window.removeEventListener("nusahr-updated", onUpdate); };
+
+    async function restoreSession() {
+      try {
+        const response = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+
+        if (!response.ok) {
+          throw new Error("Gagal memeriksa sesi");
+        }
+
+        const result = await response.json();
+
+        if (!result.authenticated || !result.user) {
+          throw new Error("Sesi tidak valid");
+        }
+
+        const user = result.user;
+
+        let nextRole: Role;
+
+        if (user.role === "hr_admin") {
+          nextRole = "hr";
+        } else if (user.role === "monitoring_admin") {
+          nextRole = "monitor";
+        } else if (
+          user.role === "employee" &&
+          user.employee_id === "EMP-001"
+        ) {
+          nextRole = "alya";
+        } else if (
+          user.role === "employee" &&
+          user.employee_id === "EMP-002"
+        ) {
+          nextRole = "bima";
+        } else {
+          throw new Error("Role tidak dikenali");
+        }
+
+        if (cancelled) return;
+
+        setRole(nextRole);
+        setPage(
+          nextRole === "hr"
+            ? "leaves"
+            : nextRole === "monitor"
+              ? "monitor"
+              : "chat"
+        );
+
+        setReady(true);
+      } catch (error) {
+        if (cancelled) return;
+
+        console.error("Gagal memulihkan sesi:", error);
+        window.location.replace("/login");
+      }
+    }
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("nusahr-updated", onUpdate);
+    };
   }, []);
+
   useEffect(() => {
     const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -80,6 +190,24 @@ export default function Home() {
 
   const active = data.conversations.find(c => c.id === activeId && c.role === role);
   const conversations = useMemo(() => data.conversations.filter(c => c.role === role && c.title.toLowerCase().includes(search.toLowerCase())).sort((a,b) => b.createdAt-a.createdAt), [data.conversations, role, search]);
+  const groupedConversations = useMemo(() => {
+  const groups: Record<string, Conversation[]> = {
+    "Hari ini": [],
+    "Kemarin": [],
+    "7 hari terakhir": [],
+    "30 hari terakhir": [],
+    "Lebih lama": [],
+  };
+
+  for (const conversation of conversations) {
+    const group = getHistoryGroup(conversation.createdAt);
+    groups[group].push(conversation);
+  }
+
+  return Object.entries(groups).filter(
+    ([, items]) => items.length > 0
+  );
+}, [conversations]);
   const leaves = useMemo<Leave[]>(() => {
   if (role === "hr") {
     return hrLeaves.map((r) => ({
@@ -104,22 +232,22 @@ export default function Home() {
   const currentAccount = accounts.find(a => a.role === role);
 
   async function login() {
-  if (busy) return;
-  setBusy(true);
+    if (busy) return;
+    setBusy(true);
 
-  try {
-    const response = await fetch("/api/demo-login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ role: selectedRole }),
-    });
+    try {
+      const response = await fetch("/api/demo-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ role: selectedRole }),
+      });
 
-    if (!response.ok) {
-      setToast("Gagal masuk ke akun demo. Silakan coba kembali.");
-      return;
-    }
+      if (!response.ok) {
+        setToast("Gagal masuk ke akun demo. Silakan coba kembali.");
+        return;
+      }
 
     sessionStorage.setItem(SESSION_KEY, selectedRole);
     setRole(selectedRole);
@@ -142,41 +270,133 @@ export default function Home() {
     setBusy(false);
   }
 }
+  
   async function logout() {
-  if (busy) return;
-  setBusy(true);
+    if (busy) return;
 
-  try {
-    const response = await fetch("/api/demo-logout", {
-      method: "POST",
-    });
+    setBusy(true);
 
-    if (!response.ok) {
-      setToast("Gagal keluar dari akun demo. Silakan coba kembali.");
-      return;
+    try {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+
+      if (!response.ok) {
+        throw new Error("Gagal mengakhiri sesi.");
+      }
+
+      sessionStorage.removeItem(SESSION_KEY);
+      setRole(null);
+      setActiveId(null);
+      setInput("");
+      setDraft({});
+      setSidebarOpen(false);
+
+      window.location.replace("/login");
+    } catch {
+      setToast("Gagal logout. Silakan coba kembali.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  
+  function go(next: Page) {
+    setPage(next);
+    setSidebarOpen(false);
+
+    if (next === "leaves" && role && isEmployee(role)) {
+      void loadMyRequests();
     }
 
-    sessionStorage.removeItem(SESSION_KEY);
-    setRole(null);
-    setActiveId(null);
-    setInput("");
+    if (next === "leaves" && role === "hr") {
+      void loadHRRequests();
+    }
+
+    if (next === "monitor" && role === "monitor") {
+      void loadMonitoring();
+    }
+  }
+
+  function startNew() {
+    if (!role || !isEmployee(role)) return;
+
+    const conversation = newConversation(role);
+
+    updateData((prev) => ({
+      ...prev,
+      conversations: [conversation, ...prev.conversations],
+    }));
+
+    setActiveId(conversation.id);
     setDraft({});
-    setSidebarOpen(false);
-  } catch {
-    setToast("Gagal mengakhiri sesi demo. Silakan coba kembali.");
-  } finally {
-    setBusy(false);
+    setInput("");
+    go("chat");
   }
-}
-  function go(next: Page) { setPage(next); setSidebarOpen(false); if (next === "leaves" && role && isEmployee(role)) void loadMyRequests(); if (next === "monitor" && role === "monitor") void loadMonitoring(); if (next === "leaves" && role === "hr") {
-  void loadHRRequests();
-}}
-  function startNew() { if (!role || !isEmployee(role)) return; const c = newConversation(role); updateData(prev => ({ ...prev, conversations: [c, ...prev.conversations] })); setActiveId(c.id); setDraft({}); setInput(""); go("chat"); }
-  function openConversation(id: string) { setActiveId(id); setDraft({}); go("chat"); }
-  function removeConversation(id: string) { updateData(prev => ({ ...prev, conversations: prev.conversations.filter(c => c.id !== id) })); if (activeId === id) setActiveId(null); setToast("Percakapan dihapus"); }
-  function addAgentMessage(convId: string, text: string, citations?: ChatMessage["citations"], proposalId?: string) {
-    updateData(prev => ({ ...prev, conversations: prev.conversations.map(c => c.id === convId ? { ...c, messages: [...c.messages, { ...makeMessage("agent", text), citations, proposalId }] } : c) }));
+
+  function openConversation(id: string) {
+    if (!role || !isEmployee(role)) return;
+
+    const conversation = dataRef.current.conversations.find(
+      (item) => item.id === id && item.role === role
+    );
+
+    if (!conversation) return;
+
+    setActiveId(id);
+    setInput("");
+    go("chat");
   }
+
+  function removeConversation(id: string) {
+    if (!role || !isEmployee(role)) return;
+
+    updateData((prev) => ({
+      ...prev,
+      conversations: prev.conversations.filter(
+        (item) => !(item.id === id && item.role === role)
+      ),
+    }));
+
+    if (activeId === id) {
+      setActiveId(null);
+    }
+  }
+
+  function addAgentMessage(
+    conversationId: string,
+    text: string,
+    citations?: ChatMessage["citations"],
+    proposalId?: string
+  ) {
+    if (!role || !isEmployee(role)) return;
+
+    updateData((prev) => ({
+      ...prev,
+      conversations: prev.conversations.map((conversation) => {
+        if (
+          conversation.id !== conversationId ||
+          conversation.role !== role
+        ) {
+          return conversation;
+        }
+
+        return {
+          ...conversation,
+          messages: [
+            ...conversation.messages,
+            {
+              ...makeMessage("agent", text),
+              ...(citations ? { citations } : {}),
+              ...(proposalId ? { proposalId } : {}),
+            },
+          ],
+        };
+      }),
+    }));
+  }
+
 
   async function sendMessage(messageText?: string) {
     const message = (messageText ?? input).trim();
@@ -416,14 +636,14 @@ async function decideHRLeave(
   }
 
   if (!ready) return <div className="loading-screen"><Sparkles size={28}/> Memuat HRAgent...</div>;
-  if (!role) return <main className="login-shell"><div className="login-glow"/><div className="login-container">
-    <div className="brand login-brand"><span className="brand-logo"><Sparkles size={23}/></span><span>HR<span className="brand-accent">Agent</span></span></div>
-    <div className="login-head"><span className="eyebrow"><span className="live-dot"/> AI-powered HR workspace</span><h1>Selamat datang <span className="gradient-text">kembali.</span></h1><p>Asisten HR yang selalu siap membantu. Pilih akun demo untuk menjelajahi pengalaman sesuai peranmu.</p></div>
-    <div className="login-card"><div className="section-heading"><div><h2>Pilih akun demo</h2><p>Masuk sebagai salah satu persona berikut</p></div><ShieldCheck size={19}/></div>
-      <div className="account-list">{accounts.map(a => <button key={a.role} className={`account-option ${selectedRole === a.role ? "selected" : ""}`} onClick={() => setSelectedRole(a.role)}><span className={`avatar ${a.color}`}>{a.initials}</span><span className="account-info"><strong>{a.name}</strong><small>{a.title} · {a.description}</small></span><span className={`select-indicator ${selectedRole === a.role ? "checked" : ""}`}>{selectedRole === a.role && <Check size={13}/>}</span></button>)}</div>
-      <button className="primary-btn login-btn" onClick={login}>Masuk sebagai {accounts.find(a => a.role === selectedRole)?.name} <ArrowRight size={18}/></button>
-      <p className="demo-note"><CircleAlert size={15}/> Mode demo tanpa kata sandi — bukan login produksi.</p>
-    </div><p className="login-footer">© 2026  · HR Agent Milestone 2</p></div></main>;
+  if (!role) {
+    return (
+      <div className="loading-screen">
+        <Sparkles size={28} />
+        Memverifikasi sesi HR Agent...
+      </div>
+    );
+  }
 
   return <div className="app-shell">
     {sidebarOpen && <button aria-label="Tutup sidebar" className="mobile-overlay" onClick={() => setSidebarOpen(false)}/>}
