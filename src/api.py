@@ -11,6 +11,10 @@ from .repository import ConflictError
 
 class HRDecisionRequest(BaseModel):
     decision: Literal["approved", "rejected"]
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 def build_runtime(settings: Settings):
     from .agent import AgentService
     from .cache import NullCache
@@ -92,6 +96,38 @@ def create_app(
             "Repository and AgentService must be initialized"
         )
 
+    @app.post("/api/v1/auth/login")
+    def login(request: LoginRequest):
+        from .session_security import login_with_password
+
+        if settings is None or settings.environment.lower() != "production":
+            raise HTTPException(
+                status_code=403,
+                detail="Production login is disabled",
+            )
+
+        result = login_with_password(
+            database_url=settings.database_url,
+            email=request.email,
+            password=request.password,
+        )
+
+        if result is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Email atau password salah",
+            )
+
+        token, user = result
+
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "employee_id": user.employee_id,
+            "display_name": user.display_name,
+            "role": user.role,
+        }
+
     def get_current_user(
         authorization: str | None = Header(default=None),
     ) -> AuthContext:
@@ -112,7 +148,16 @@ def create_app(
                 status_code=401,
                 detail="Invalid authorization header",
             )
+        if settings is not None and settings.environment.lower() == "production":
+            from .session_security import authenticate_session
 
+            user = authenticate_session(
+                settings.database_url,
+                token.strip(),
+            )
+        else:
+            user = repository.authenticate(token.strip())
+        
         user = repository.authenticate(token.strip())
 
         if user is None:

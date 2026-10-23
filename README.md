@@ -153,7 +153,7 @@ Users do not need to install Python or Node.js, nor do they need to use a termin
 
 Simply open the HR Agent frontend link:
 
-Application URL: https://<frontend-project-name>.vercel.app
+Application URL: https://hr-agent-web-gilt.vercel.app/
 
 The link can be accessed via a web browser on any laptop, computer, or smartphone connected to the internet.
 
