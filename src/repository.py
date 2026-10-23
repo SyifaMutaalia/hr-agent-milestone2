@@ -302,7 +302,20 @@ class MemoryRepository:
         employee_id: str,
     ) -> list[LeaveRequestView]:
         return list(self.requests.get(employee_id, []))
-    def list_hr_leave_requests(self) -> list[HRLeaveRequestView]: ...
+    def list_hr_leave_requests(self) -> list[HRLeaveRequestView]:
+        result = []
+
+        for employee_id, requests in self.requests.items():
+            for request in requests:
+                result.append(
+                    HRLeaveRequestView(
+                        employee_id=employee_id,
+                        **request.model_dump(),
+                    )
+                )
+
+        return result
+
     def decide_hr_leave_request(
         self,
         request_id: str,
@@ -311,57 +324,51 @@ class MemoryRepository:
         if decision not in ("approved", "rejected"):
             raise ValueError("Invalid HR decision")
 
-        with self.pool.connection() as conn:
-            with conn.transaction():
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT employee_id, leave_type, business_days
-                        FROM leave_requests
-                        WHERE request_id = %s
-                          AND status = 'pending_manager_review'
-                        FOR UPDATE
-                        """,
-                        (request_id,),
+        for employee_id, requests in self.requests.items():
+            for index, request in enumerate(requests):
+                if request.request_id != request_id:
+                    continue
+
+                if request.status != "pending_manager_review":
+                    return False
+
+                if decision == "approved":
+                    balance = next(
+                        (
+                            item
+                            for item in self.balances.get(employee_id, [])
+                            if item.leave_type == request.leave_type
+                        ),
+                        None,
                     )
 
-                    row = cur.fetchone()
+                    if (
+                        balance is None
+                        or balance.available_days < request.business_days
+                    ):
+                        raise ValueError("Saldo cuti tidak mencukupi")
 
-                    if row is None:
-                        return False
+                    balance_index = self.balances[employee_id].index(balance)
 
-                    employee_id, leave_type, days = row
-
-                    if decision == "approved":
-                        cur.execute(
-                            """
-                            UPDATE leave_balances
-                            SET available_days = available_days - %s,
-                                as_of_date = CURRENT_DATE
-                            WHERE employee_id = %s
-                              AND leave_type = %s
-                              AND available_days >= %s
-                            RETURNING available_days
-                            """,
-                            (days, employee_id, leave_type, days),
+                    self.balances[employee_id][balance_index] = (
+                        balance.model_copy(
+                            update={
+                                "available_days": (
+                                    balance.available_days
+                                    - request.business_days
+                                ),
+                                "as_of_date": date.today(),
+                            }
                         )
-
-                        if cur.fetchone() is None:
-                            raise ValueError(
-                                "Saldo cuti tidak mencukupi"
-                            )
-
-                    cur.execute(
-                        """
-                        UPDATE leave_requests
-                        SET status = %s
-                        WHERE request_id = %s
-                          AND status = 'pending_manager_review'
-                        """,
-                        (decision, request_id),
                     )
 
-        return True
+                requests[index] = request.model_copy(
+                    update={"status": decision}
+                )
+
+                return True
+
+        return False
     def create_ticket(
         self,
         employee_id: str,

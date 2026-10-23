@@ -5,6 +5,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
+from fastapi import requests
+from openai import auth
+from openai import auth
 from pydantic import ValidationError
 
 from .config import Settings
@@ -21,6 +24,26 @@ from .repository import Repository
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
+    
+    {
+        "type": "function",
+        "name": "get_my_leave_requests",
+        "description": (
+            "Retrieve the authenticated employee's leave requests "
+            "and their actual statuses from the database. "
+            "Use when an employee asks about their leave status, "
+            "approval progress, or submission history. "
+            "Never accepts an employee ID."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+
     {
         "type": "function",
         "name": "search_hr_policy",
@@ -158,6 +181,7 @@ class ToolExecutor:
         """
         employee_only_tools = {
             "get_my_leave_balance",
+            "get_my_leave_requests",
             "prepare_leave_request",
             "create_hr_ticket",
         }
@@ -213,6 +237,25 @@ class ToolExecutor:
                     balance.model_dump(mode="json")
                     for balance in balances
                 ],
+            }
+
+        if tool_name == "get_my_leave_requests":
+            if auth.role != "employee":
+                raise DomainError(
+                    "Hanya pegawai yang dapat melihat pengajuan cutinya."
+                )
+
+            requests = self.repository.list_leave_requests(
+                auth.employee_id
+            )
+
+            return {
+                "employee_id": auth.employee_id,
+                "requests": [
+                    item.model_dump(mode="json")
+                    for item in requests
+                ],
+                "total": len(requests),
             }
 
         if tool_name == "prepare_leave_request":

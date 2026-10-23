@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from typing import Literal
+from .config import get_settings
 from .demo_reset import demo_reset_router
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
@@ -100,7 +101,10 @@ def create_app(
     def login(request: LoginRequest):
         from .session_security import login_with_password
 
-        if settings is None or settings.environment.lower() != "production":
+        if (
+            settings is None
+            or settings.environment.lower() not in ("development", "production")
+        ):
             raise HTTPException(
                 status_code=403,
                 detail="Production login is disabled",
@@ -128,6 +132,7 @@ def create_app(
             "role": user.role,
         }
 
+    
     def get_current_user(
         authorization: str | None = Header(default=None),
     ) -> AuthContext:
@@ -148,17 +153,23 @@ def create_app(
                 status_code=401,
                 detail="Invalid authorization header",
             )
-        if settings is not None and settings.environment.lower() == "production":
-            from .session_security import authenticate_session
 
+        from .session_security import authenticate_session
+
+        user = None
+
+        if settings is not None:
             user = authenticate_session(
                 settings.database_url,
                 token.strip(),
             )
-        else:
+
+        if (
+            user is None
+            and settings is not None
+            and settings.environment.lower() == "development"
+        ):
             user = repository.authenticate(token.strip())
-        
-        user = repository.authenticate(token.strip())
 
         if user is None:
             raise HTTPException(
@@ -167,6 +178,17 @@ def create_app(
             )
 
         return user
+
+    @app.get("/api/v1/auth/me")
+    def get_authenticated_user(
+        user: AuthContext = Depends(get_current_user),
+    ):
+        return {
+            "employee_id": user.employee_id,
+            "display_name": user.display_name,
+            "role": user.role,
+        }
+
 
     @app.get("/healthz")
     def healthz():

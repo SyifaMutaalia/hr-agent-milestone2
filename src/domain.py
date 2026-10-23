@@ -70,10 +70,6 @@ def validate_leave_request(
             start_date=args.start_date,
             today=today,
         )
-        if working_days_notice < 3:
-            raise DomainError(
-                "cuti tahunan harus diajukan minimal 3 hari kerja sebelum tanggal mulai"
-            )
 
     days = business_days(args.start_date, args.end_date)
 

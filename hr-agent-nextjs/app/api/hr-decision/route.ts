@@ -1,18 +1,9 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import { callBackend } from "@/lib/backend";
-import { getDemoSessionRole } from "@/lib/demo-session";
+import { callAuthenticatedBackend } from "@/lib/backend";
 
 export async function PATCH(request: NextRequest) {
   try {
-    const role = await getDemoSessionRole();
-
-    if (role !== "hr") {
-      return NextResponse.json(
-        { detail: "Akses hanya untuk HR Admin." },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json();
     const { request_id, decision } = body;
 
@@ -27,23 +18,20 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const response = await callBackend(
-      "hr",
-      `/api/v1/hr/leave-requests/${encodeURIComponent(request_id)}/decision`,
+    return await callAuthenticatedBackend(
+      `/api/v1/hr/leave-requests/${encodeURIComponent(
+        request_id
+      )}/decision`,
       "PATCH",
       { decision }
     );
-
-    const result = await response.json();
-
-    return NextResponse.json(result, {
-      status: response.status,
-    });
   } catch (error) {
     console.error("[HR_DECISION_ERROR]", error);
 
     return NextResponse.json(
-      { detail: "Keputusan belum dapat diproses. Silakan coba kembali." },
+      {
+        detail: "Keputusan belum dapat diproses.",
+      },
       { status: 500 }
     );
   }

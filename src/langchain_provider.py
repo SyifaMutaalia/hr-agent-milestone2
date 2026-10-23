@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-
+import time
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -129,9 +129,25 @@ class LangChainProvider:
             else self.llm
         )
 
+        start_time = time.perf_counter()
+
         response = llm.invoke(
             messages,
             max_tokens=max_output_tokens,
+        )
+
+        elapsed = time.perf_counter() - start_time
+
+        print(
+            "[LLM TIMING]",
+            f"duration={elapsed:.2f}s",
+            flush=True,
+        )
+
+        print(
+            "[TOOL CALL DEBUG]",
+            f"tool_names={[call['name'] for call in response.tool_calls]}",
+            flush=True,
         )
         print(
             "[LANGCHAIN DIAGNOSTIC]",

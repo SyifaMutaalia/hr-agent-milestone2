@@ -1,19 +1,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
-import { callBackend } from "@/lib/backend";
+import { callAuthenticatedBackend } from "@/lib/backend";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { role, message, conversation_id } = body;
+
+    const { message, conversation_id } = body;
 
     if (
-      !["alya", "bima"].includes(role) ||
       typeof message !== "string" ||
       !message.trim()
     ) {
       return NextResponse.json(
-        { error: "Role atau pesan tidak valid." },
+        { error: "Pesan tidak valid." },
         { status: 400 }
       );
     }
@@ -25,8 +25,7 @@ export async function POST(request: NextRequest) {
         : {}),
     };
 
-    const response = await callBackend(
-      role,
+    const response = await callAuthenticatedBackend(
       "/api/v1/chat",
       "POST",
       payload
@@ -42,7 +41,9 @@ export async function POST(request: NextRequest) {
       ...data,
       mode: "api",
     });
-  } catch {
+  } catch (error) {
+    console.error("[CHAT API ERROR]", error);
+
     return NextResponse.json(
       { error: "Gagal memproses permintaan chat." },
       { status: 500 }
