@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/backend";
 
@@ -42,6 +41,14 @@ export async function POST(request: NextRequest) {
     );
 
     const data = await backendResponse.json().catch(() => ({}));
+    console.log("[LOGIN BACKEND RESPONSE]", 
+      {
+        status: backendResponse.status,
+        hasAccessToken: typeof data.access_token === "string",
+        role: data.role,
+        responseKeys: Object.keys(data),
+      }
+    );
 
     if (!backendResponse.ok) {
       return NextResponse.json(
