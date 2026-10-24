@@ -24,11 +24,11 @@ The PPT:
 |---|---|
 | Programming Language | Python 3.11 |
 | Backend | FastAPI |
-| Frontend | Streamlit |
+| Frontend | NextJs |
 | Large Language Model | OpenAI |
 | Vector Database | Pinecone |
 | Relational Database | Neon PostgreSQL |
-| Containerization | Docker and Docker Compose |
+| Deployment | Vercel |
 | Testing | Pytest |
 
 ## Prerequisites
@@ -169,56 +169,6 @@ API: https://hr-agent-api.vercel.app/
 The link can be accessed via a web browser on any laptop, computer, or smartphone connected to the internet.
 
 The FastAPI backend runs separately on Vercel and is automatically utilized by the frontend.
-
-## 7. Run with Docker
-
-Build the Docker image:
-
-```bash
-docker build -t hr-agent:milestone2 .
-```
-
-Run the FastAPI container:
-
-```bash
-docker run --rm -p 8000:8000 --env-file .env hr-agent:milestone2
-```
-
-Access the API documentation:
-
-http://localhost:8000/docs
-
-### Docker Compose
-
-The repository also includes a `docker-compose.yml` file for running the application using containers.
-
-Build and start the configured services:
-
-```bash
-docker compose up --build -d
-```
-
-Check running services:
-
-```bash
-docker compose ps
-```
-
-View application logs:
-
-```bash
-docker compose logs -f
-```
-
-Stop the containers:
-
-```bash
-docker compose down
-```
-
-Service URLs depend on the port mappings defined in `docker-compose.yml`.
-
-**Note:** The `.env` file must remain outside the Docker image. Credentials should be provided at runtime.
 
 ## 8. Run Automated Tests
 
