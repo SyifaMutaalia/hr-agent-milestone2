@@ -42,18 +42,18 @@ def build_runtime(settings: Settings):
         if not settings.pinecone_api_key:
             raise RuntimeError("PINECONE_API_KEY belum dikonfigurasi.")
 
-        ProviderClass = (
-    LangChainProvider
-    if settings.llm_provider == "langchain"
-    else OpenAIProvider
-)
+    ProviderClass = (
+        LangChainProvider
+        if settings.llm_provider == "langchain"
+        else OpenAIProvider
+    )
 
     provider = ProviderClass(
-    api_key=settings.openai_api_key,
-    model=settings.openai_model,
-    embedding_model=settings.embedding_model,
-    embedding_dimensions=settings.embedding_dimensions,
-)
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        embedding_model=settings.embedding_model,
+        embedding_dimensions=settings.embedding_dimensions,
+    )
 
     cache = NullCache()
 
